@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>회의실 예약 시스템</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>회의실 예약 시스템</h1>
+        
+        <div id="message" class="alert" style="display: none;"></div>
+
+        <div class="tabs">
+            <button class="tab-button active" onclick="openTab('reservation')">예약하기</button>
+            <button class="tab-button" onclick="openTab('view')">예약현황</button>
+        </div>
+
+        <div id="reservation" class="tab-content" style="display: block;">
+            <h2>회의실 예약</h2>
+            <form id="reservationForm">
+                <div class="form-group">
+                    <label for="name">이름 (Name):</label>
+                    <input type="text" id="name" name="name" required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="department">부서 (Department):</label>
+                    <input type="text" id="department" name="department" required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="meetingPurpose">회의 목적 (Meeting Purpose):</label>
+                    <input type="text" id="meetingPurpose" name="meetingPurpose" required>
+                </div>
+                
+                <div class="form-group">
+                    <label>회의실 선택:</label>
+                    <div id="roomSelection" class="room-selection">
+                        <button type="button" class="room-option" data-room="회의실 A">회의실 A</button>
+                        <button type="button" class="room-option" data-room="회의실 B">회의실 B</button>
+                    </div>
+                </div>
+                
+                <input type="hidden" id="room" name="room">
+                <input type="hidden" id="date" name="date">
+                <input type="hidden" id="startTime" name="startTime">
+                <input type="hidden" id="endTime" name="endTime">
+                
+                <div id="calendarSection" class="form-group" style="display: none;">
+                    <div id="dateDisplay">날짜 선택: <span id="selectedDate"></span></div>
+                    <div id="calendar"></div>
+                </div>
+                
+                <div id="timeSlotsSection" class="form-group" style="display: none;">
+                    <label>시간 선택 (1시간 단위):</label>
+                    <div id="timeSlots"></div>
+                </div>
+                
+                <button type="submit" class="btn">예약하기</button>
+            </form>
+        </div>
+
+        <div id="view" class="tab-content">
+            <h2>예약 현황</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>날짜</th>
+                        <th>시간</th>
+                        <th>회의실</th>
+                        <th>예약자</th>
+                        <th>부서</th>
+                        <th>회의 목적</th>
+                    </tr>
+                </thead>
+                <tbody id="reservationsList">
+                    <tr>
+                        <td colspan="6" class="no-data">예약 내역이 없습니다.</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+    <script>
+        // Global variables for time slot selection
+        let selectedStartTime = null;
+        let availableSlots = [];
+        
+        // Initialize the application
+        document.addEventListener('DOMContentLoaded', function() {
+            // Initialize calendar and event listeners
+            initCalendar();
+            
+            // Room selection
+            document.querySelectorAll('.room-option').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const room = btn.dataset.room;
+                    const today = new Date();
+                    const year = today.getFullYear();
+                    const month = today.getMonth();
+                    const date = today.getDate();
+                    const formattedDate = `${year}-${(month + 1).toString().padStart(2, '0')}-${date.toString().padStart(2, '0')}`;
+                    
+                    // Update UI and hidden input
+                    const roomInput = document.getElementById('room');
+                    roomInput.value = room;
+                    roomInput.dispatchEvent(new Event('change'));
+                    
+                    // Update UI
+                    document.querySelectorAll('.room-option').forEach(b => b.classList.remove('selected'));
+                    btn.classList.add('selected');
+                    document.getElementById('calendarSection').style.display = 'block';
+                    
+                    // Set today's date and update time slots
+                    document.getElementById('date').value = formattedDate;
+                    document.getElementById('selectedDate').textContent = formattedDate;
+                    document.getElementById('timeSlotsSection').style.display = 'block';
+                    updateTimeSlots(room, formattedDate);
+                    
+                    // Highlight today's date in calendar
+                    const calendarBody = document.getElementById('calendar-body');
+                    if (calendarBody) {
+                        const cells = calendarBody.getElementsByTagName('td');
+                        for (let cell of cells) {
+                            cell.classList.remove('today', 'selected');
+                            if (cell.textContent === date.toString() && !cell.classList.contains('disabled')) {
+                                cell.classList.add('today', 'selected');
+                            }
+                        }
+                    }
+                });
+            });
+            
+            // Form submission
+            const form = document.getElementById('reservationForm');
+            let isSubmitting = false;
+            
+            form.addEventListener('submit', async function(e) {
+                e.preventDefault();
+                
+                // Prevent double submission
+                if (isSubmitting) return;
+                isSubmitting = true;
+                
+                // Disable submit button
+                const submitButton = this.querySelector('button[type="submit"]');
+                const originalButtonText = submitButton.textContent;
+                submitButton.disabled = true;
+                submitButton.textContent = '처리 중...';
+                
+                try {
+                    const name = document.getElementById('name').value.trim();
+                    const department = document.getElementById('department').value.trim();
+                    const meetingPurpose = document.getElementById('meetingPurpose').value.trim();
+                    const date = document.getElementById('date').value;
+                    const room = document.getElementById('room').value;
+                    const startTime = document.getElementById('startTime').value;
+                    const endTime = document.getElementById('endTime').value;
+                    
+                    // Validate inputs
+                    if (!name) {
+                        showMessage('이름을 입력해주세요.', 'error');
+                        return;
+                    }
+                    
+                    if (!room) {
+                        showMessage('회의실을 선택해주세요.', 'error');
+                        return;
+                    }
+                    
+                    if (!date) {
+                        showMessage('날짜를 선택해주세요.', 'error');
+                        return;
+                    }
+                    
+                    if (!startTime || !endTime) {
+                        showMessage('시작 시간과 종료 시간을 모두 선택해주세요.', 'error');
+                        return;
+                    }
+                    
+                    // Convert times to minutes for comparison
+                    const toMinutes = (time) => {
+                        const [h, m] = time.split(':').map(Number);
+                        return h * 60 + m;
+                    };
+                    
+                    const startMinutes = toMinutes(startTime);
+                    const endMinutes = toMinutes(endTime);
+                    
+                    if (startMinutes >= endMinutes) {
+                        showMessage('종료 시간은 시작 시간 이후여야 합니다.', 'error');
+                        return;
+                    }
+                    
+                    const reservation = { 
+                        name,
+                        department,
+                        meetingPurpose,
+                        date, 
+                        room, 
+                        startTime, 
+                        endTime,
+                        timeRange: `${startTime} ~ ${endTime}`,
+                        createdAt: new Date().toISOString()
+                    };
+                    
+                    // Check for time conflicts
+                    const hasConflict = reservations.some(res => {
+                        if (res.date !== date || res.room !== room) return false;
+                        
+                        const resStart = toMinutes(res.startTime);
+                        const resEnd = toMinutes(res.endTime);
+                        
+                        return (startMinutes < resEnd && endMinutes > resStart);
+                    });
+                    
+                    if (hasConflict) {
+                        throw new Error('해당 시간대에 이미 예약이 있습니다.');
+                    }
+                    
+                    // Add to reservations
+                    reservations.push(reservation);
+                    localStorage.setItem('reservations', JSON.stringify(reservations));
+                    
+                    // Update UI
+                    showMessage('예약이 완료되었습니다!', 'success');
+                    updateReservationsList();
+                    
+                    // Reset form
+                    form.reset();
+                    document.getElementById('timeSlotsSection').style.display = 'none';
+                    document.querySelector('.room-option.selected')?.classList.remove('selected');
+                    document.getElementById('calendarSection').style.display = 'none';
+                    selectedStartTime = null;
+                    
+                    // Re-initialize calendar
+                    initCalendar();
+                    
+                } catch (error) {
+                    console.error('예약 중 오류 발생:', error);
+                    showMessage(error.message || '예약 중 오류가 발생했습니다.', 'error');
+                } finally {
+                    // Re-enable submit button
+                    isSubmitting = false;
+                    submitButton.disabled = false;
+                    submitButton.textContent = originalButtonText;
+                }
+            });
+            
+            // Initial display of reservations
+            updateReservationsList();
+        });
+
+        function initCalendar() {
+            // Initialize calendar
+            const calendar = document.getElementById('calendar');
+            const today = new Date();
+            const year = today.getFullYear();
+            const month = today.getMonth();
+            const date = today.getDate();
+            
+            // Set default date to today
+            const formattedDate = `${year}-${(month + 1).toString().padStart(2, '0')}-${date.toString().padStart(2, '0')}`;
+            document.getElementById('date').value = formattedDate;
+            document.getElementById('selectedDate').textContent = formattedDate;
+            
+            // Add month and year header
+            const monthYearHeader = document.createElement('h3');
+            const monthNames = ['1월', '2월', '3월', '4월', '5월', '6월', '7월', '8월', '9월', '10월', '11월', '12월'];
+            monthYearHeader.textContent = `${year}년 ${monthNames[month]}`;
+            monthYearHeader.style.textAlign = 'center';
+            monthYearHeader.style.margin = '10px 0';
+            calendar.innerHTML = '';  // Clear previous content
+            calendar.appendChild(monthYearHeader);
+            
+            // Create calendar table
+            const table = document.createElement('table');
+            table.innerHTML = `
+                <thead>
+                    <tr>
+                        <th>일</th>
+                        <th>월</th>
+                        <th>화</th>
+                        <th>수</th>
+                        <th>목</th>
+                        <th>금</th>
+                        <th>토</th>
+                    </tr>
+                </thead>
+                <tbody id="calendar-body"></tbody>
+            `;
+            calendar.appendChild(table);
+            
+            // Fill in calendar dates
+            const calendarBody = document.getElementById('calendar-body');
+            const firstDay = new Date(year, month, 1);
+            const lastDay = new Date(year, month + 1, 0);
+            const firstDayOfWeek = firstDay.getDay();
+            const lastDayOfMonth = lastDay.getDate();
+            
+            for (let i = 0; i < 6; i++) {
+                const row = document.createElement('tr');
+                for (let j = 0; j < 7; j++) {
+                    const cell = document.createElement('td');
+                    const date = i * 7 + j - firstDayOfWeek + 1;
+                    if (date < 1 || date > lastDayOfMonth) {
+                        cell.textContent = '';
+                    } else {
+                        const currentDate = new Date(year, month, date);
+                        const dayOfWeek = currentDate.getDay(); // 0 = Sunday, 6 = Saturday
+                        const isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
+                        
+                        cell.textContent = date;
+                        
+                        if (isWeekend) {
+                            cell.classList.add('disabled');
+                            cell.style.color = '#ccc';
+                            cell.style.cursor = 'not-allowed';
+                        } else {
+                            cell.addEventListener('click', () => {
+                                const selectedDate = `${year}-${(month + 1).toString().padStart(2, '0')}-${date.toString().padStart(2, '0')}`;
+                                document.getElementById('date').value = selectedDate;
+                                document.getElementById('selectedDate').textContent = selectedDate;
+                                document.getElementById('timeSlotsSection').style.display = 'block';
+                                updateTimeSlots(document.getElementById('room').value, selectedDate);
+                                
+                                // Update selected date highlighting
+                                const allCells = calendarBody.getElementsByTagName('td');
+                                for (let c of allCells) {
+                                    c.classList.remove('selected');
+                                }
+                                cell.classList.add('selected');
+                            });
+                        }
+                    }
+                    row.appendChild(cell);
+                }
+                calendarBody.appendChild(row);
+            }
+        }
+
+        function updateTimeSlots(room, date) {
+            const timeSlots = document.getElementById('timeSlots');
+            timeSlots.innerHTML = '';
+            
+            // Get all possible time slots (9:00-17:00)
+            const allTimeSlots = [];
+            for (let hour = 9; hour <= 17; hour++) {
+                allTimeSlots.push({
+                    time: `${hour.toString().padStart(2, '0')}:00`,
+                    available: false
+                });
+            }
+            
+            // Get available time slots for the selected room and date
+            availableSlots = getAvailableTimeSlots(room, date);
+            
+            // Mark available time slots
+            allTimeSlots.forEach(slot => {
+                slot.available = availableSlots.includes(slot.time);
+            });
+            
+            // Create time slot elements
+            allTimeSlots.forEach((slot, index) => {
+                const container = document.createElement('div');
+                container.className = 'time-slot-container';
+                
+                // Time slot
+                const timeSlot = document.createElement('div');
+                timeSlot.className = `time-slot ${slot.available ? 'available' : 'unavailable'}`;
+                timeSlot.textContent = slot.time;
+                timeSlot.dataset.time = slot.time;
+                
+                // Add tooltip
+                const tooltip = document.createElement('div');
+                tooltip.className = 'time-slot-tooltip';
+                tooltip.textContent = slot.available ? '선택하려면 클릭하세요' : '예약 불가';
+                container.appendChild(tooltip);
+                
+                if (slot.available) {
+                    timeSlot.addEventListener('click', () => handleTimeSlotClick(slot.time));
+                }
+                
+                container.appendChild(timeSlot);
+                timeSlots.appendChild(container);
+            });
+            
+            // Update time range info
+            updateTimeRangeInfo();
+        }
+        
+        function handleTimeSlotClick(clickedTime) {
+            const timeSlots = document.querySelectorAll('.time-slot.available');
+            
+            if (!selectedStartTime) {
+                // First click - select start time
+                selectedStartTime = clickedTime;
+                timeSlots.forEach(slot => {
+                    slot.classList.remove('selected', 'in-range');
+                    if (slot.dataset.time === selectedStartTime) {
+                        slot.classList.add('selected');
+                    }
+                });
+                updateTimeRangeInfo(selectedStartTime);
+            } else {
+                // Second click - select end time
+                const startIndex = availableSlots.indexOf(selectedStartTime);
+                const endIndex = availableSlots.indexOf(clickedTime);
+                
+                if (endIndex >= startIndex) {
+                    // Valid time range selected
+                    const startTime = selectedStartTime;
+                    const endTimeIndex = endIndex === availableSlots.length - 1 ? endIndex + 1 : endIndex;
+                    const endTime = availableSlots[endTimeIndex] || '18:00';
+                    
+                    document.getElementById('startTime').value = startTime;
+                    document.getElementById('endTime').value = endTime;
+                    
+                    // Update UI to show selected range
+                    timeSlots.forEach(slot => {
+                        const slotTime = slot.dataset.time;
+                        const slotIndex = availableSlots.indexOf(slotTime);
+                        
+                        slot.classList.remove('selected', 'in-range');
+                        
+                        if (slotTime === selectedStartTime) {
+                            slot.classList.add('selected');
+                        } else if (slotIndex >= startIndex && slotIndex <= endIndex) {
+                            slot.classList.add('in-range');
+                        }
+                    });
+                    
+                    updateTimeRangeInfo(startTime, endTime);
+                    selectedStartTime = null; // Reset for next selection
+                } else {
+                    // Invalid range, reset selection
+                    selectedStartTime = null;
+                    timeSlots.forEach(slot => slot.classList.remove('selected', 'in-range'));
+                    updateTimeRangeInfo();
+                }
+            }
+        }
+        
+        function updateTimeRangeInfo(startTime, endTime) {
+            let infoDiv = document.getElementById('timeRangeInfo');
+            
+            if (!infoDiv) {
+                infoDiv = document.createElement('div');
+                infoDiv.id = 'timeRangeInfo';
+                infoDiv.className = 'time-range-info';
+                const timeSlotsSection = document.getElementById('timeSlotsSection');
+                timeSlotsSection.insertBefore(infoDiv, document.getElementById('timeSlots'));
+            }
+            
+            if (!startTime) {
+                infoDiv.innerHTML = '시작 시간을 선택하세요';
+                return;
+            }
+            
+            if (!endTime) {
+                infoDiv.innerHTML = `시작 시간: <span>${startTime}</span> - 종료 시간을 선택하세요`;
+                return;
+            }
+            
+            infoDiv.innerHTML = `선택된 시간: <span>${startTime} ~ ${endTime}</span>`;
+        }
+
+        function getAvailableTimeSlots(room, date) {
+            // Get available time slots for the selected room and date
+            const availableTimeSlots = [];
+            const timeSlots = [];
+            
+            // Create all possible time slots (9:00-17:00)
+            for (let hour = 9; hour <= 17; hour++) {
+                timeSlots.push({
+                    start: `${hour.toString().padStart(2, '0')}:00`,
+                    end: `${(hour + 1).toString().padStart(2, '0')}:00`
+                });
+            }
+            
+            // Check each time slot for conflicts
+            timeSlots.forEach(slot => {
+                const hasConflict = reservations.some(res => {
+                    if (res.date !== date || res.room !== room) return false;
+                    
+                    const toMinutes = (time) => {
+                        const [h, m] = time.split(':').map(Number);
+                        return h * 60 + m;
+                    };
+                    
+                    const slotStart = toMinutes(slot.start);
+                    const slotEnd = toMinutes(slot.end);
+                    const resStart = toMinutes(res.startTime);
+                    const resEnd = toMinutes(res.endTime);
+                    
+                    return (slotStart < resEnd && slotEnd > resStart);
+                });
+                
+                if (!hasConflict) {
+                    availableTimeSlots.push(slot.start);
+                }
+            });
+            
+            return availableTimeSlots;
+        }
+
+        function showMessage(message, type) {
+            const messageDiv = document.getElementById('message');
+            messageDiv.textContent = message;
+            messageDiv.className = `alert ${type}`;
+            messageDiv.style.display = 'block';
+            
+            // Hide message after 3 seconds
+            setTimeout(() => {
+                messageDiv.style.display = 'none';
+            }, 3000);
+        }
+
+        function updateReservationsList() {
+            const reservationsList = document.getElementById('reservationsList');
+            reservationsList.innerHTML = '';
+            
+            if (reservations.length === 0) {
+                const row = document.createElement('tr');
+                row.innerHTML = '<td colspan="6" class="no-data">예약 내역이 없습니다.</td>';
+                reservationsList.appendChild(row);
+                return;
+            }
+            
+            // Sort reservations by date and start time
+            const sortedReservations = [...reservations].sort((a, b) => {
+                if (a.date !== b.date) return a.date.localeCompare(b.date);
+                return a.startTime.localeCompare(b.startTime);
+            });
+            
+            sortedReservations.forEach(reservation => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${reservation.date}</td>
+                    <td>${reservation.timeRange || reservation.startTime}</td>
+                    <td>${reservation.room}</td>
+                    <td>${reservation.name}</td>
+                    <td>${reservation.department || '-'}</td>
+                    <td>${reservation.meetingPurpose || '-'}</td>
+                `;
+                reservationsList.appendChild(row);
+            });
+        }
+    </script>
+</body>
+</html>
